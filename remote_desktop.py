@@ -27,6 +27,8 @@ from phone_stream import (
     send_key as phone_send_key, send_text as phone_send_text,
     get_phone_resolution,
     start_scrcpy, stop_scrcpy, capture_scrcpy_window,
+    start_mic_forward, stop_mic_forward,
+    dial_number, end_call, set_call_volume, toggle_mute,
 )
 
 logger = logging.getLogger(__name__)
@@ -363,6 +365,71 @@ def on_phone_key(data):
 def on_phone_text(data):
     if _phone_ip:
         phone_send_text(_phone_ip, data["text"])
+
+
+
+
+# ───────────────────────────────────────────────────────────────
+# Call control API endpoints
+# ───────────────────────────────────────────────────────────────
+
+@app.route("/api/call", methods=["POST"])
+def api_call():
+    """Dial a number: POST { "number": "+971..." }"""
+    import json as _json
+    data = request.get_json(silent=True) or {}
+    number = str(data.get("number", "")).strip()
+    if not number:
+        return _json.dumps({"ok": False, "error": "number required"}), 400, {"Content-Type": "application/json"}
+    if not _phone_ip:
+        return _json.dumps({"ok": False, "error": "no device connected"}), 503, {"Content-Type": "application/json"}
+    ok = dial_number(_phone_ip, number)
+    if ok:
+        # Start routing PC mic to phone automatically
+        start_mic_forward(_phone_ip)
+    return _json.dumps({"ok": ok}), 200 if ok else 500, {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+
+
+@app.route("/api/call/end", methods=["POST"])
+def api_call_end():
+    import json as _json
+    if not _phone_ip:
+        return _json.dumps({"ok": False, "error": "no device"}), 503, {"Content-Type": "application/json"}
+    ok = end_call(_phone_ip)
+    stop_mic_forward()
+    return _json.dumps({"ok": ok}), 200 if ok else 500, {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+
+
+@app.route("/api/call/mute", methods=["POST"])
+def api_call_mute():
+    import json as _json
+    if not _phone_ip:
+        return _json.dumps({"ok": False}), 503, {"Content-Type": "application/json"}
+    ok = toggle_mute(_phone_ip)
+    return _json.dumps({"ok": ok}), 200, {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+
+
+@app.route("/api/call/volume", methods=["POST"])
+def api_call_volume():
+    import json as _json
+    data = request.get_json(silent=True) or {}
+    level = int(data.get("level", 10))
+    if not _phone_ip:
+        return _json.dumps({"ok": False}), 503, {"Content-Type": "application/json"}
+    ok = set_call_volume(_phone_ip, level)
+    return _json.dumps({"ok": ok}), 200, {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+
+
+@app.route("/api/call", methods=["OPTIONS"])
+@app.route("/api/call/end", methods=["OPTIONS"])
+@app.route("/api/call/mute", methods=["OPTIONS"])
+@app.route("/api/call/volume", methods=["OPTIONS"])
+def api_call_options():
+    resp = app.make_default_options_response()
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+    resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    return resp
 
 
 # ===== Start =====

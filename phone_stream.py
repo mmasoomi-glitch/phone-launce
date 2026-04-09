@@ -1,9 +1,121 @@
+import re
 import subprocess
 import logging
 import time
 import os
 
 logger = logging.getLogger(__name__)
+
+
+# Separate scrcpy process that routes PC mic → phone (used during calls)
+_mic_proc = None
+
+
+def start_mic_forward(phone_ip, port=5555):
+    """Forward PC microphone audio to the phone. Call this when a call starts."""
+    global _mic_proc
+    if _mic_proc and _mic_proc.poll() is None:
+        return  # already running
+    target = _adb_target(phone_ip, port)
+    exe = SCRCPY_PATH if os.path.exists(SCRCPY_PATH) else "scrcpy"
+    try:
+        _mic_proc = subprocess.Popen(
+            [
+                exe, "-s", target,
+                "--no-video",
+                "--audio-source=mic",   # PC mic → phone speaker
+                "--audio-codec=aac",
+            ],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        logger.info(f"Mic forward started for {target} (PID {_mic_proc.pid})")
+    except Exception as e:
+        logger.error(f"Mic forward failed: {e}")
+
+
+def stop_mic_forward():
+    """Stop PC mic → phone routing."""
+    global _mic_proc
+    if _mic_proc:
+        try:
+            _mic_proc.terminate()
+            _mic_proc.wait(timeout=3)
+        except Exception:
+            pass
+        _mic_proc = None
+        logger.info("Mic forward stopped")
+
+
+def dial_number(phone_ip, number: str, port=5555):
+    """Dial a phone number via ADB intent."""
+    target = _adb_target(phone_ip, port)
+    clean = re.sub(r"[^\d+]", "", number)
+    try:
+        subprocess.run(
+            ["adb", "-s", target, "shell", "am", "start",
+             "-a", "android.intent.action.CALL",
+             "-d", f"tel:{clean}"],
+            timeout=5,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        logger.info(f"Dialing {clean} on {target}")
+        return True
+    except Exception as e:
+        logger.error(f"Dial failed: {e}")
+        return False
+
+
+def end_call(phone_ip, port=5555):
+    """End the current call via ADB keyevent ENDCALL (6)."""
+    target = _adb_target(phone_ip, port)
+    try:
+        subprocess.run(
+            ["adb", "-s", target, "shell", "input", "keyevent", "6"],
+            timeout=5,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        logger.info(f"Call ended on {target}")
+        return True
+    except Exception as e:
+        logger.error(f"End call failed: {e}")
+        return False
+
+
+def set_call_volume(phone_ip, level: int, port=5555):
+    """Set call volume (0–15). Uses ADB media vol command."""
+    target = _adb_target(phone_ip, port)
+    level = max(0, min(15, level))
+    try:
+        subprocess.run(
+            ["adb", "-s", target, "shell", "media", "volume",
+             "--set", str(level), "--stream", "0"],  # stream 0 = VOICE_CALL
+            timeout=5,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        return True
+    except Exception as e:
+        logger.error(f"Set volume failed: {e}")
+        return False
+
+
+def toggle_mute(phone_ip, port=5555):
+    """Toggle phone microphone mute via keyevent MUTE (91)."""
+    target = _adb_target(phone_ip, port)
+    try:
+        subprocess.run(
+            ["adb", "-s", target, "shell", "input", "keyevent", "91"],
+            timeout=5,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        return True
+    except Exception as e:
+        logger.error(f"Mute toggle failed: {e}")
+        return False
+
 
 
 def _adb_target(phone_ip, port=5555):
@@ -149,7 +261,11 @@ def start_scrcpy(phone_ip, port=5555, max_size=720):
         proc = subprocess.Popen(
             [
                 exe, "-s", target,
-                "--no-audio",
+                # ── Audio: phone speaker → PC speakers ──
+                "--audio-source=output",
+                "--audio-codec=aac",
+                "--audio-bit-rate=128000",
+                # ── Video ──
                 "--max-size", str(max_size),
                 "--window-title", "ScrcpyMirror",
                 "--window-borderless",
