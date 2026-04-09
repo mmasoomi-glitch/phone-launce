@@ -5,6 +5,14 @@ import os
 
 logger = logging.getLogger(__name__)
 
+
+def _adb_target(phone_ip, port=5555):
+    """Return ADB -s target. If phone_ip has no colon it's a USB serial, use as-is."""
+    if ":" in phone_ip:
+        return _adb_target(phone_ip, port)
+    return phone_ip  # USB serial
+
+
 SCRCPY_PATH = os.path.join(
     os.environ.get("LOCALAPPDATA", ""),
     "Microsoft", "WinGet", "Packages",
@@ -15,7 +23,7 @@ SCRCPY_PATH = os.path.join(
 
 def connect_adb_wifi(phone_ip, port=5555):
     """Connect to Android device over WiFi via ADB."""
-    target = f"{phone_ip}:{port}"
+    target = _adb_target(phone_ip, port)
     try:
         subprocess.run(
             ["adb", "disconnect", target],
@@ -39,7 +47,7 @@ def connect_adb_wifi(phone_ip, port=5555):
 def disconnect_adb(phone_ip, port=5555):
     try:
         subprocess.run(
-            ["adb", "disconnect", f"{phone_ip}:{port}"],
+            ["adb", "disconnect", _adb_target(phone_ip, port)],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             creationflags=subprocess.CREATE_NO_WINDOW, timeout=5,
         )
@@ -49,7 +57,7 @@ def disconnect_adb(phone_ip, port=5555):
 
 def capture_phone_screen(phone_ip, port=5555):
     """Capture phone screenshot via ADB. Returns PNG bytes or None."""
-    target = f"{phone_ip}:{port}"
+    target = _adb_target(phone_ip, port)
     try:
         result = subprocess.run(
             ["adb", "-s", target, "exec-out", "screencap", "-p"],
@@ -65,7 +73,7 @@ def capture_phone_screen(phone_ip, port=5555):
 
 
 def send_touch(phone_ip, x, y, port=5555):
-    target = f"{phone_ip}:{port}"
+    target = _adb_target(phone_ip, port)
     try:
         subprocess.Popen(
             ["adb", "-s", target, "shell", "input", "tap", str(x), str(y)],
@@ -77,7 +85,7 @@ def send_touch(phone_ip, x, y, port=5555):
 
 
 def send_swipe(phone_ip, x1, y1, x2, y2, duration_ms=300, port=5555):
-    target = f"{phone_ip}:{port}"
+    target = _adb_target(phone_ip, port)
     try:
         subprocess.Popen(
             ["adb", "-s", target, "shell", "input", "swipe",
@@ -90,7 +98,7 @@ def send_swipe(phone_ip, x1, y1, x2, y2, duration_ms=300, port=5555):
 
 
 def send_key(phone_ip, keycode, port=5555):
-    target = f"{phone_ip}:{port}"
+    target = _adb_target(phone_ip, port)
     try:
         subprocess.Popen(
             ["adb", "-s", target, "shell", "input", "keyevent", str(keycode)],
@@ -102,7 +110,7 @@ def send_key(phone_ip, keycode, port=5555):
 
 
 def send_text(phone_ip, text, port=5555):
-    target = f"{phone_ip}:{port}"
+    target = _adb_target(phone_ip, port)
     try:
         escaped = text.replace(" ", "%s")
         subprocess.Popen(
@@ -115,7 +123,7 @@ def send_text(phone_ip, text, port=5555):
 
 
 def get_phone_resolution(phone_ip, port=5555):
-    target = f"{phone_ip}:{port}"
+    target = _adb_target(phone_ip, port)
     try:
         result = subprocess.run(
             ["adb", "-s", target, "shell", "wm", "size"],
@@ -135,7 +143,7 @@ def get_phone_resolution(phone_ip, port=5555):
 
 def start_scrcpy(phone_ip, port=5555, max_size=720):
     """Start scrcpy with visible window for capture. Returns Popen process."""
-    target = f"{phone_ip}:{port}"
+    target = _adb_target(phone_ip, port)
     exe = SCRCPY_PATH if os.path.exists(SCRCPY_PATH) else "scrcpy"
     try:
         proc = subprocess.Popen(

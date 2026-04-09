@@ -383,3 +383,29 @@ def start_remote_desktop(config, phone_ip=None):
     if phone_ip:
         logger.info(f"Phone streaming enabled for {phone_ip}")
     socketio.run(app, host="0.0.0.0", port=port, log_output=False)
+
+
+@app.route("/api/devices")
+def list_devices():
+    """Return connected ADB devices with model info."""
+    import subprocess, json as _json
+    try:
+        out = subprocess.check_output(["adb", "devices", "-l"], text=True, timeout=5)
+    except FileNotFoundError:
+        return _json.dumps({"error": "adb not found", "devices": []}), 503, {"Content-Type": "application/json"}
+    except subprocess.TimeoutExpired:
+        return _json.dumps({"error": "adb timeout", "devices": []}), 503, {"Content-Type": "application/json"}
+
+    devices = []
+    for line in out.splitlines()[1:]:
+        line = line.strip()
+        if not line or "offline" in line or "unauthorized" in line:
+            continue
+        parts = line.split()
+        if len(parts) >= 2 and parts[1] == "device":
+            serial = parts[0]
+            model = next((p.split(":")[1] for p in parts if p.startswith("model:")), serial)
+            product = next((p.split(":")[1] for p in parts if p.startswith("product:")), "")
+            devices.append({"serial": serial, "model": model, "product": product})
+
+    return _json.dumps({"devices": devices}), 200, {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
