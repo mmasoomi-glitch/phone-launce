@@ -1,0 +1,210 @@
+import subprocess
+import logging
+import time
+import os
+
+logger = logging.getLogger(__name__)
+
+SCRCPY_PATH = os.path.join(
+    os.environ.get("LOCALAPPDATA", ""),
+    "Microsoft", "WinGet", "Packages",
+    "Genymobile.scrcpy_Microsoft.Winget.Source_8wekyb3d8bbwe",
+    "scrcpy-win64-v3.3.4", "scrcpy.exe"
+)
+
+
+def connect_adb_wifi(phone_ip, port=5555):
+    """Connect to Android device over WiFi via ADB."""
+    target = f"{phone_ip}:{port}"
+    try:
+        subprocess.run(
+            ["adb", "disconnect", target],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW, timeout=5,
+        )
+        time.sleep(1)
+        result = subprocess.run(
+            ["adb", "connect", target],
+            capture_output=True, text=True,
+            creationflags=subprocess.CREATE_NO_WINDOW, timeout=10,
+        )
+        output = result.stdout.strip()
+        logger.info(f"ADB connect {target}: {output}")
+        return "connected" in output.lower()
+    except Exception as e:
+        logger.error(f"ADB WiFi connect failed: {e}")
+        return False
+
+
+def disconnect_adb(phone_ip, port=5555):
+    try:
+        subprocess.run(
+            ["adb", "disconnect", f"{phone_ip}:{port}"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW, timeout=5,
+        )
+    except Exception:
+        pass
+
+
+def capture_phone_screen(phone_ip, port=5555):
+    """Capture phone screenshot via ADB. Returns PNG bytes or None."""
+    target = f"{phone_ip}:{port}"
+    try:
+        result = subprocess.run(
+            ["adb", "-s", target, "exec-out", "screencap", "-p"],
+            capture_output=True, timeout=5,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        if result.returncode == 0 and len(result.stdout) > 100:
+            return result.stdout
+        return None
+    except Exception as e:
+        logger.error(f"Phone screencap failed: {e}")
+        return None
+
+
+def send_touch(phone_ip, x, y, port=5555):
+    target = f"{phone_ip}:{port}"
+    try:
+        subprocess.Popen(
+            ["adb", "-s", target, "shell", "input", "tap", str(x), str(y)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+    except Exception:
+        pass
+
+
+def send_swipe(phone_ip, x1, y1, x2, y2, duration_ms=300, port=5555):
+    target = f"{phone_ip}:{port}"
+    try:
+        subprocess.Popen(
+            ["adb", "-s", target, "shell", "input", "swipe",
+             str(x1), str(y1), str(x2), str(y2), str(duration_ms)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+    except Exception:
+        pass
+
+
+def send_key(phone_ip, keycode, port=5555):
+    target = f"{phone_ip}:{port}"
+    try:
+        subprocess.Popen(
+            ["adb", "-s", target, "shell", "input", "keyevent", str(keycode)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+    except Exception:
+        pass
+
+
+def send_text(phone_ip, text, port=5555):
+    target = f"{phone_ip}:{port}"
+    try:
+        escaped = text.replace(" ", "%s")
+        subprocess.Popen(
+            ["adb", "-s", target, "shell", "input", "text", escaped],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+    except Exception:
+        pass
+
+
+def get_phone_resolution(phone_ip, port=5555):
+    target = f"{phone_ip}:{port}"
+    try:
+        result = subprocess.run(
+            ["adb", "-s", target, "shell", "wm", "size"],
+            capture_output=True, text=True, timeout=5,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        for line in result.stdout.strip().split("\n"):
+            if "size" in line.lower():
+                parts = line.split(":")[-1].strip().split("x")
+                return int(parts[0]), int(parts[1])
+    except Exception as e:
+        logger.error(f"Failed to get phone resolution: {e}")
+    return None
+
+
+# ===== Scrcpy =====
+
+def start_scrcpy(phone_ip, port=5555, max_size=720):
+    """Start scrcpy with visible window for capture. Returns Popen process."""
+    target = f"{phone_ip}:{port}"
+    exe = SCRCPY_PATH if os.path.exists(SCRCPY_PATH) else "scrcpy"
+    try:
+        proc = subprocess.Popen(
+            [
+                exe, "-s", target,
+                "--no-audio",
+                "--max-size", str(max_size),
+                "--window-title", "ScrcpyMirror",
+                "--window-borderless",
+                "--always-on-top",
+            ],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        logger.info(f"scrcpy started for {target} (PID {proc.pid})")
+        time.sleep(3)  # wait for window to appear
+        return proc
+    except Exception as e:
+        logger.error(f"scrcpy start failed: {e}")
+        return None
+
+
+def stop_scrcpy(proc):
+    if proc is None:
+        return
+    try:
+        proc.terminate()
+        proc.wait(timeout=5)
+        logger.info("scrcpy stopped")
+    except subprocess.TimeoutExpired:
+        proc.kill()
+    except Exception:
+        pass
+
+
+def capture_scrcpy_window():
+    """Capture the scrcpy window by title. Returns PIL Image or None."""
+    try:
+        import ctypes
+        import ctypes.wintypes
+        import mss
+        from PIL import Image
+
+        # DPI awareness for correct coordinates
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except Exception:
+            pass
+
+        hwnd = ctypes.windll.user32.FindWindowW(None, "ScrcpyMirror")
+        if not hwnd:
+            return None
+
+        rect = ctypes.wintypes.RECT()
+        ctypes.windll.user32.GetClientRect(hwnd, ctypes.byref(rect))
+
+        # Get screen position of client area
+        point = ctypes.wintypes.POINT(0, 0)
+        ctypes.windll.user32.ClientToScreen(hwnd, ctypes.byref(point))
+
+        w = rect.right - rect.left
+        h = rect.bottom - rect.top
+        if w < 50 or h < 50:
+            return None
+
+        with mss.mss() as sct:
+            monitor = {"left": point.x, "top": point.y, "width": w, "height": h}
+            raw = sct.grab(monitor)
+            img = Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
+            return img
+    except Exception as e:
+        logger.error(f"scrcpy capture failed: {e}")
+        return None

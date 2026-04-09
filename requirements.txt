@@ -1,0 +1,10 @@
+flask
+flask-socketio
+gevent
+gevent-websocket
+mss
+pyautogui
+Pillow
+python-dotenv
+soundcard
+numpy

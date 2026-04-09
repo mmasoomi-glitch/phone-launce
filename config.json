@@ -1,0 +1,13 @@
+{
+  "subnet": "192.168.70",
+  "scan_interval_seconds": 15,
+  "remote_desktop_port": 80,
+  "capture_fps": 20,
+  "capture_quality": 40,
+  "capture_max_width": 960,
+  "phone_fps": 8,
+  "phone_quality": 40,
+  "phone_max_width": 720,
+  "audio_sample_rate": 22050,
+  "audio_chunk_size": 4096
+}

@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Remote Access</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #111; overflow: hidden; }
+  #status {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 10;
+    padding: 4px 12px; font: 12px monospace;
+    background: rgba(0,0,0,0.7); color: #0f0;
+    display: flex; gap: 16px; align-items: center;
+  }
+  #status.disconnected { color: #f44; }
+  #audio-btn {
+    padding: 2px 8px; font: 11px monospace;
+    background: #333; color: #0f0; border: 1px solid #0f0;
+    cursor: pointer; border-radius: 3px;
+  }
+  #audio-btn.muted { color: #f44; border-color: #f44; }
+  canvas {
+    display: block; width: 100vw; height: 100vh;
+    cursor: none;
+  }
+</style>
+</head>
+<body>
+<div id="status">
+  <span id="conn">Connecting...</span>
+  <span id="fps">0 FPS</span>
+  <span id="res">-</span>
+  <button id="audio-btn" class="muted" onclick="toggleAudio()">Audio: OFF</button>
+  <span id="audio-status"></span>
+</div>
+<canvas id="screen"></canvas>
+
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script>
+const canvas = document.getElementById('screen');
+const ctx = canvas.getContext('2d');
+const statusEl = document.getElementById('status');
+const connEl = document.getElementById('conn');
+const fpsEl = document.getElementById('fps');
+const resEl = document.getElementById('res');
+const audioBtn = document.getElementById('audio-btn');
+const audioStatusEl = document.getElementById('audio-status');
+
+// Resize canvas to window
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// ===== Audio Playback =====
+let audioCtx = null;
+let audioEnabled = false;
+let audioBufferQueue = [];
+let nextPlayTime = 0;
+
+function toggleAudio() {
+  if (!audioEnabled) {
+    // Must be triggered by user gesture for autoplay policy
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
+    audioEnabled = true;
+    nextPlayTime = audioCtx.currentTime;
+    audioBtn.textContent = 'Audio: ON';
+    audioBtn.classList.remove('muted');
+    audioStatusEl.textContent = 'listening...';
+  } else {
+    audioEnabled = false;
+    if (audioCtx) { audioCtx.close(); audioCtx = null; }
+    audioBtn.textContent = 'Audio: OFF';
+    audioBtn.classList.add('muted');
+    audioStatusEl.textContent = '';
+  }
+}
+
+function playAudioChunk(pcmBase64, sampleRate) {
+  if (!audioEnabled || !audioCtx) return;
+
+  // Decode base64 to Int16 PCM
+  const raw = atob(pcmBase64);
+  const bytes = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+  const int16 = new Int16Array(bytes.buffer);
+
+  // Convert Int16 to Float32 [-1, 1]
+  const float32 = new Float32Array(int16.length);
+  for (let i = 0; i < int16.length; i++) float32[i] = int16[i] / 32768;
+
+  // Create audio buffer and schedule playback
+  const buffer = audioCtx.createBuffer(1, float32.length, sampleRate);
+  buffer.getChannelData(0).set(float32);
+
+  const source = audioCtx.createBufferSource();
+  source.buffer = buffer;
+  source.connect(audioCtx.destination);
+
+  const now = audioCtx.currentTime;
+  if (nextPlayTime < now) nextPlayTime = now;
+  source.start(nextPlayTime);
+  nextPlayTime += buffer.duration;
+}
+
+// ===== Socket Connection =====
+const socket = io({ transports: ['websocket'] });
+
+socket.on('connect', () => {
+  connEl.textContent = 'Connected';
+  statusEl.className = '';
+});
+
+socket.on('disconnect', () => {
+  connEl.textContent = 'Disconnected';
+  statusEl.className = 'disconnected';
+});
+
+// ===== Frame Rendering =====
+let frameCount = 0;
+let lastFpsTime = performance.now();
+const img = new Image();
+let prevUrl = null;
+
+socket.on('frame', (data) => {
+  const blob = new Blob([data], { type: 'image/jpeg' });
+  const url = URL.createObjectURL(blob);
+  img.onload = () => {
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    if (prevUrl) URL.revokeObjectURL(prevUrl);
+    prevUrl = url;
+    resEl.textContent = img.naturalWidth + 'x' + img.naturalHeight;
+  };
+  img.src = url;
+
+  frameCount++;
+  const now = performance.now();
+  if (now - lastFpsTime >= 1000) {
+    fpsEl.textContent = frameCount + ' FPS';
+    frameCount = 0;
+    lastFpsTime = now;
+  }
+});
+
+// ===== Audio Receive =====
+socket.on('audio', (data) => {
+  playAudioChunk(data.pcm, data.rate);
+});
+
+// ===== Mouse Events =====
+function getPos(e) {
+  return { x: e.clientX / canvas.width, y: e.clientY / canvas.height };
+}
+
+let lastMove = 0;
+canvas.addEventListener('mousemove', (e) => {
+  const now = Date.now();
+  if (now - lastMove < 30) return;
+  lastMove = now;
+  socket.emit('mouse_move', getPos(e));
+});
+
+canvas.addEventListener('mousedown', (e) => {
+  e.preventDefault();
+  const btn = e.button === 2 ? 'right' : e.button === 1 ? 'middle' : 'left';
+  socket.emit('mouse_click', { ...getPos(e), button: btn });
+});
+
+canvas.addEventListener('dblclick', (e) => {
+  e.preventDefault();
+  socket.emit('mouse_dblclick', getPos(e));
+});
+
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const delta = e.deltaY > 0 ? -3 : 3;
+  socket.emit('mouse_scroll', { ...getPos(e), delta });
+}, { passive: false });
+
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+// ===== Keyboard Events =====
+const MODIFIERS = new Set(['Control', 'Shift', 'Alt', 'Meta']);
+
+document.addEventListener('keydown', (e) => {
+  e.preventDefault();
+  if (MODIFIERS.has(e.key)) return;
+
+  const mods = [];
+  if (e.ctrlKey) mods.push('Control');
+  if (e.shiftKey) mods.push('Shift');
+  if (e.altKey) mods.push('Alt');
+  if (e.metaKey) mods.push('Meta');
+
+  if (mods.length > 0) {
+    mods.push(e.key);
+    socket.emit('key_combo', { keys: mods });
+  } else {
+    socket.emit('key_press', { key: e.key });
+  }
+});
+
+// Keep focus on canvas
+canvas.setAttribute('tabindex', '0');
+canvas.focus();
+canvas.addEventListener('click', () => canvas.focus());
+</script>
+</body>
+</html>

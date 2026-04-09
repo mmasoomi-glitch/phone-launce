@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Phone Remote</title>
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box;
+    touch-action: none; -webkit-touch-callout: none; -webkit-user-select: none;
+    user-select: none; -webkit-tap-highlight-color: transparent;
+  }
+  html { position: fixed; width: 100%; height: 100%; overflow: hidden; }
+  body {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    overflow: hidden; overscroll-behavior: none;
+    background: #111; display: flex; flex-direction: column;
+    font-family: monospace;
+  }
+
+  /* Top bar */
+  #topbar {
+    flex-shrink: 0; padding: 6px 8px; background: #000;
+    display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+    border-bottom: 1px solid #333;
+  }
+  .info { font-size: 11px; color: #0f0; }
+  .info.off { color: #f44; }
+  .btn {
+    padding: 4px 10px; font: bold 11px monospace;
+    background: #222; color: #0f0; border: 1px solid #444;
+    cursor: pointer; border-radius: 4px; white-space: nowrap;
+  }
+  .btn:active { background: #0f0; color: #000; }
+  .btn.active { background: #0f0; color: #000; border-color: #0f0; }
+  .sep { color: #333; font-size: 14px; }
+
+  /* Screen area */
+  #screen-area {
+    flex: 1; display: flex; justify-content: center; align-items: center;
+    overflow: hidden; position: relative; min-height: 0;
+    background: #000;
+  }
+  #screen {
+    display: block; max-width: 100%; max-height: 100%;
+    object-fit: contain; touch-action: none;
+  }
+
+  /* Keyboard panel */
+  #kb-panel {
+    flex-shrink: 0; background: #1a1a1a; padding: 6px 4px;
+    display: none; border-top: 1px solid #333;
+  }
+  #kb-panel.open { display: block; }
+  #text-bar {
+    display: flex; gap: 4px; margin-bottom: 6px;
+  }
+  #text-input {
+    flex: 1; padding: 8px; font: 14px monospace;
+    background: #000; color: #0f0; border: 1px solid #444;
+    border-radius: 4px; outline: none;
+    touch-action: auto; user-select: text; -webkit-user-select: text;
+  }
+  #send-btn {
+    padding: 8px 14px; font: bold 12px monospace;
+    background: #0f0; color: #000; border: none;
+    border-radius: 4px; cursor: pointer;
+  }
+  .kr { display: flex; justify-content: center; gap: 3px; margin-bottom: 3px; }
+  .k {
+    min-width: 26px; height: 36px; font: 14px monospace;
+    background: #333; color: #fff; border: 1px solid #555;
+    border-radius: 5px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .k:active { background: #0f0; color: #000; }
+  .k.w { min-width: 48px; font-size: 10px; }
+  .k.sp { flex: 1; max-width: 220px; }
+
+  /* QR overlay */
+  #qr-overlay {
+    display: none; position: fixed; inset: 0; z-index: 100;
+    background: rgba(0,0,0,0.95);
+    flex-direction: column; justify-content: center; align-items: center; gap: 16px;
+  }
+  #qr-overlay.show { display: flex; }
+  #qr-overlay canvas { border: 4px solid #fff; border-radius: 8px; }
+  #qr-url { color: #0f0; font: 12px monospace; word-break: break-all; max-width: 90%; text-align: center; }
+  #qr-close { padding: 10px 30px; font: bold 14px monospace; background: #f44; color: #fff; border: none; border-radius: 6px; cursor: pointer; }
+</style>
+</head>
+<body>
+
+<!-- Top bar -->
+<div id="topbar">
+  <span class="info" id="conn">Connecting...</span>
+  <span class="info" id="fps">0fps</span>
+  <span class="sep">|</span>
+  <button class="btn" ontouchend="sendKey(3)" onclick="sendKey(3)">HOME</button>
+  <button class="btn" ontouchend="sendKey(4)" onclick="sendKey(4)">BACK</button>
+  <button class="btn" ontouchend="sendKey(187)" onclick="sendKey(187)">APPS</button>
+  <button class="btn" ontouchend="sendKey(26)" onclick="sendKey(26)">PWR</button>
+  <button class="btn" ontouchend="sendKey(27)" onclick="sendKey(27)">CAM</button>
+  <button class="btn" ontouchend="sendKey(24)" onclick="sendKey(24)">V+</button>
+  <button class="btn" ontouchend="sendKey(25)" onclick="sendKey(25)">V-</button>
+  <span class="sep">|</span>
+  <button class="btn" id="kb-btn" onclick="toggleKB()">KB</button>
+  <button class="btn" id="scrcpy-btn" onclick="toggleScrcpy()">SCRCPY</button>
+  <button class="btn" onclick="showQR()">QR</button>
+</div>
+
+<!-- Phone screen -->
+<div id="screen-area">
+  <canvas id="screen"></canvas>
+</div>
+
+<!-- Keyboard panel -->
+<div id="kb-panel">
+  <div id="text-bar">
+    <input type="text" id="text-input" placeholder="Type and tap SEND..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+    <button id="send-btn" onclick="sendText()">SEND</button>
+  </div>
+  <div class="kr">
+    <button class="k" data-k="1">1</button><button class="k" data-k="2">2</button>
+    <button class="k" data-k="3">3</button><button class="k" data-k="4">4</button>
+    <button class="k" data-k="5">5</button><button class="k" data-k="6">6</button>
+    <button class="k" data-k="7">7</button><button class="k" data-k="8">8</button>
+    <button class="k" data-k="9">9</button><button class="k" data-k="0">0</button>
+  </div>
+  <div class="kr">
+    <button class="k" data-k="q">q</button><button class="k" data-k="w">w</button>
+    <button class="k" data-k="e">e</button><button class="k" data-k="r">r</button>
+    <button class="k" data-k="t">t</button><button class="k" data-k="y">y</button>
+    <button class="k" data-k="u">u</button><button class="k" data-k="i">i</button>
+    <button class="k" data-k="o">o</button><button class="k" data-k="p">p</button>
+  </div>
+  <div class="kr">
+    <button class="k" data-k="a">a</button><button class="k" data-k="s">s</button>
+    <button class="k" data-k="d">d</button><button class="k" data-k="f">f</button>
+    <button class="k" data-k="g">g</button><button class="k" data-k="h">h</button>
+    <button class="k" data-k="j">j</button><button class="k" data-k="k">k</button>
+    <button class="k" data-k="l">l</button>
+  </div>
+  <div class="kr">
+    <button class="k w" id="shift-btn" onclick="toggleShift()">SHIFT</button>
+    <button class="k" data-k="z">z</button><button class="k" data-k="x">x</button>
+    <button class="k" data-k="c">c</button><button class="k" data-k="v">v</button>
+    <button class="k" data-k="b">b</button><button class="k" data-k="n">n</button>
+    <button class="k" data-k="m">m</button>
+    <button class="k w" onclick="pkey(67)">DEL</button>
+  </div>
+  <div class="kr">
+    <button class="k w" data-k="@">@</button>
+    <button class="k w" data-k=".">.</button>
+    <button class="k sp" data-k=" ">SPACE</button>
+    <button class="k w" data-k=",">,</button>
+    <button class="k w" onclick="pkey(66)">OK</button>
+  </div>
+</div>
+
+<!-- QR overlay -->
+<div id="qr-overlay">
+  <div style="color:#fff;font:bold 16px monospace;">Scan to connect</div>
+  <img id="qr-img" style="border:4px solid #fff;border-radius:8px;background:#fff;">
+  <div id="qr-url"></div>
+  <button id="qr-close" onclick="hideQR()">CLOSE</button>
+</div>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script>
+// Prevent ALL default touch on body
+document.addEventListener('touchmove', e => { if (e.target.id !== 'text-input') e.preventDefault(); }, { passive: false });
+document.addEventListener('gesturestart', e => e.preventDefault(), { passive: false });
+document.addEventListener('gesturechange', e => e.preventDefault(), { passive: false });
+
+const canvas = document.getElementById('screen');
+const ctx = canvas.getContext('2d');
+const connEl = document.getElementById('conn');
+const fpsEl = document.getElementById('fps');
+
+const socket = io({ transports: ['websocket'] });
+
+socket.on('connect', () => { connEl.textContent = 'Connected'; connEl.className = 'info'; socket.emit('phone_start'); });
+socket.on('disconnect', () => { connEl.textContent = 'Offline'; connEl.className = 'info off'; });
+
+// ===== Frames =====
+let fc = 0, lt = performance.now();
+const img = new Image();
+let prevUrl = null;
+let phoneW = 1080, phoneH = 2400; // actual phone resolution for coordinate mapping
+
+socket.on('phone_frame', data => {
+  const blob = new Blob([data], { type: 'image/jpeg' });
+  const url = URL.createObjectURL(blob);
+  img.onload = () => {
+    // Only update canvas size if changed
+    if (canvas.width !== img.naturalWidth || canvas.height !== img.naturalHeight) {
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+    }
+    ctx.drawImage(img, 0, 0);
+    if (prevUrl) URL.revokeObjectURL(prevUrl);
+    prevUrl = url;
+  };
+  img.src = url;
+  fc++;
+  const now = performance.now();
+  if (now - lt >= 1000) { fpsEl.textContent = fc + 'fps'; fc = 0; lt = now; }
+});
+
+socket.on('phone_resolution', data => { phoneW = data.width; phoneH = data.height; });
+
+// ===== Coordinate mapping =====
+// Map screen pixel to actual phone pixel using phone resolution (not canvas size)
+function toPhone(clientX, clientY) {
+  const rect = canvas.getBoundingClientRect();
+  const rx = (clientX - rect.left) / rect.width;
+  const ry = (clientY - rect.top) / rect.height;
+  return {
+    x: Math.round(Math.max(0, Math.min(1, rx)) * phoneW),
+    y: Math.round(Math.max(0, Math.min(1, ry)) * phoneH)
+  };
+}
+
+// ===== Mouse (desktop) =====
+let mStart = null;
+canvas.addEventListener('mousedown', e => {
+  e.preventDefault();
+  mStart = { ...toPhone(e.clientX, e.clientY), cx: e.clientX, cy: e.clientY, t: Date.now() };
+});
+canvas.addEventListener('mouseup', e => {
+  if (!mStart) return;
+  e.preventDefault();
+  const end = toPhone(e.clientX, e.clientY);
+  const dist = Math.hypot(e.clientX - mStart.cx, e.clientY - mStart.cy);
+  if (dist > 15) {
+    socket.emit('phone_swipe', { x1: mStart.x, y1: mStart.y, x2: end.x, y2: end.y, duration: Math.max(Math.min(Date.now() - mStart.t, 1000), 100) });
+  } else {
+    socket.emit('phone_tap', { x: mStart.x, y: mStart.y });
+  }
+  mStart = null;
+});
+canvas.addEventListener('click', e => e.preventDefault());
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+// ===== Touch (mobile) =====
+let tStart = null;
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault(); e.stopPropagation();
+  const t = e.touches[0];
+  tStart = { ...toPhone(t.clientX, t.clientY), cx: t.clientX, cy: t.clientY, t: Date.now() };
+}, { passive: false });
+
+canvas.addEventListener('touchend', e => {
+  e.preventDefault(); e.stopPropagation();
+  if (!tStart) return;
+  const t = e.changedTouches[0];
+  const end = toPhone(t.clientX, t.clientY);
+  const dist = Math.hypot(t.clientX - tStart.cx, t.clientY - tStart.cy);
+  if (dist > 20) {
+    socket.emit('phone_swipe', { x1: tStart.x, y1: tStart.y, x2: end.x, y2: end.y, duration: Math.max(Math.min(Date.now() - tStart.t, 1000), 100) });
+  } else {
+    socket.emit('phone_tap', { x: tStart.x, y: tStart.y });
+  }
+  tStart = null;
+}, { passive: false });
+
+canvas.addEventListener('touchmove', e => { e.preventDefault(); e.stopPropagation(); }, { passive: false });
+
+// ===== Keyboard =====
+let shiftOn = false;
+const kbPanel = document.getElementById('kb-panel');
+const textInput = document.getElementById('text-input');
+const shiftBtn = document.getElementById('shift-btn');
+
+function toggleKB() { kbPanel.classList.toggle('open'); }
+function toggleShift() {
+  shiftOn = !shiftOn;
+  shiftBtn.style.background = shiftOn ? '#0f0' : '#333';
+  shiftBtn.style.color = shiftOn ? '#000' : '#fff';
+  document.querySelectorAll('.k[data-k]').forEach(b => {
+    const k = b.getAttribute('data-k');
+    if (k.match(/^[a-z]$/)) b.textContent = shiftOn ? k.toUpperCase() : k;
+  });
+}
+
+document.querySelectorAll('.k[data-k]').forEach(b => {
+  b.addEventListener('click', e => {
+    e.preventDefault();
+    let key = b.getAttribute('data-k');
+    if (shiftOn && key.match(/^[a-z]$/)) key = key.toUpperCase();
+    socket.emit('phone_text', { text: key });
+    if (shiftOn) toggleShift();
+  });
+});
+
+function pkey(code) { socket.emit('phone_key', { keycode: code }); }
+function sendKey(code) { socket.emit('phone_key', { keycode: code }); }
+
+function sendText() {
+  const t = textInput.value;
+  if (t) { socket.emit('phone_text', { text: t }); textInput.value = ''; }
+}
+textInput.addEventListener('keydown', e => {
+  e.stopPropagation();
+  if (e.key === 'Enter') { e.preventDefault(); sendText(); }
+});
+
+// ===== QR Code =====
+function showQR() {
+  const url = window.location.href;
+  document.getElementById('qr-url').textContent = url;
+  document.getElementById('qr-img').src = '/qr?url=' + encodeURIComponent(url);
+  document.getElementById('qr-overlay').classList.add('show');
+}
+function hideQR() { document.getElementById('qr-overlay').classList.remove('show'); }
+
+// ===== Scrcpy Toggle =====
+const scrcpyBtn = document.getElementById('scrcpy-btn');
+function toggleScrcpy() { socket.emit('toggle_scrcpy'); }
+socket.on('scrcpy_status', data => {
+  if (data.active) {
+    scrcpyBtn.classList.add('active');
+    scrcpyBtn.textContent = 'SCRCPY ON';
+  } else {
+    scrcpyBtn.classList.remove('active');
+    scrcpyBtn.textContent = 'SCRCPY';
+  }
+});
+</script>
+</body>
+</html>

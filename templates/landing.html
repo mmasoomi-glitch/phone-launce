@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Remote Access</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0a0a0a; color: #fff; font-family: monospace; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px; }
+  h1 { font-size: 22px; color: #0f0; margin-bottom: 8px; }
+  .subtitle { color: #666; font-size: 12px; margin-bottom: 30px; }
+  .section { margin-bottom: 30px; width: 100%; max-width: 400px; }
+  .section-title { font-size: 13px; color: #888; margin-bottom: 10px; border-bottom: 1px solid #333; padding-bottom: 4px; }
+  .card {
+    display: block; padding: 14px 16px; margin-bottom: 8px;
+    background: #1a1a1a; border: 1px solid #333; border-radius: 8px;
+    text-decoration: none; color: #fff; transition: all 0.15s;
+  }
+  .card:hover, .card:active { background: #222; border-color: #0f0; }
+  .card-title { font-size: 15px; font-weight: bold; margin-bottom: 4px; }
+  .card-title .badge { font-size: 10px; padding: 2px 6px; border-radius: 3px; margin-left: 6px; vertical-align: middle; }
+  .badge-fast { background: #0f0; color: #000; }
+  .badge-secure { background: #f90; color: #000; }
+  .card-desc { font-size: 11px; color: #888; }
+  .card-url { font-size: 10px; color: #555; margin-top: 4px; word-break: break-all; }
+  #speed-result { font-size: 11px; color: #0f0; margin-top: 10px; text-align: center; }
+  .footer { margin-top: 30px; font-size: 10px; color: #444; text-align: center; }
+</style>
+</head>
+<body>
+
+<h1>Remote Access Panel</h1>
+<div class="subtitle">Choose connection method</div>
+
+<div class="section">
+  <div class="section-title">PC Desktop</div>
+  <a class="card" id="pc-local" href="#">
+    <div class="card-title">Local Network <span class="badge badge-fast">FAST</span></div>
+    <div class="card-desc">Direct LAN connection — lowest latency, max speed</div>
+    <div class="card-url" id="pc-local-url">-</div>
+  </a>
+  <a class="card" id="pc-internet" href="#">
+    <div class="card-title">Internet <span class="badge badge-secure">ANYWHERE</span></div>
+    <div class="card-desc">Via ngrok tunnel — accessible from any network</div>
+    <div class="card-url" id="pc-internet-url">-</div>
+  </a>
+</div>
+
+<div class="section">
+  <div class="section-title">Phone Screen</div>
+  <a class="card" id="ph-local" href="#">
+    <div class="card-title">Local Network <span class="badge badge-fast">FAST</span></div>
+    <div class="card-desc">Direct LAN — best for local control</div>
+    <div class="card-url" id="ph-local-url">-</div>
+  </a>
+  <a class="card" id="ph-internet" href="#">
+    <div class="card-title">Internet <span class="badge badge-secure">ANYWHERE</span></div>
+    <div class="card-desc">Via ngrok — control from anywhere</div>
+    <div class="card-url" id="ph-internet-url">-</div>
+  </a>
+</div>
+
+<div id="speed-result"></div>
+
+<div class="footer">QR code: add /qr to any URL above</div>
+
+<script>
+const localBase = 'http://{{ local_ip }}';
+const ngrokBase = '{{ ngrok_url }}';
+
+// Set URLs
+document.getElementById('pc-local').href = localBase + '/access';
+document.getElementById('pc-local-url').textContent = localBase + '/access';
+document.getElementById('ph-local').href = localBase + '/phone';
+document.getElementById('ph-local-url').textContent = localBase + '/phone';
+
+if (ngrokBase) {
+  document.getElementById('pc-internet').href = ngrokBase + '/access';
+  document.getElementById('pc-internet-url').textContent = ngrokBase + '/access';
+  document.getElementById('ph-internet').href = ngrokBase + '/phone';
+  document.getElementById('ph-internet-url').textContent = ngrokBase + '/phone';
+} else {
+  document.getElementById('pc-internet-url').textContent = 'ngrok not running';
+  document.getElementById('ph-internet-url').textContent = 'ngrok not running';
+}
+
+// Speed test: ping local vs ngrok
+const speedEl = document.getElementById('speed-result');
+async function pingTest(url) {
+  const start = performance.now();
+  try {
+    await fetch(url, { method: 'HEAD', mode: 'no-cors', cache: 'no-store' });
+    return Math.round(performance.now() - start);
+  } catch { return -1; }
+}
+
+(async () => {
+  speedEl.textContent = 'Testing speeds...';
+  const localMs = await pingTest(localBase + '/');
+  const netMs = ngrokBase ? await pingTest(ngrokBase + '/') : -1;
+  let msg = '';
+  if (localMs >= 0) msg += 'Local: ' + localMs + 'ms';
+  if (netMs >= 0) msg += '  |  Internet: ' + netMs + 'ms';
+  if (localMs >= 0 && netMs >= 0) {
+    msg += '  |  ' + (localMs < netMs ? 'Local is ' + Math.round(netMs/Math.max(localMs,1)) + 'x faster' : 'Similar speed');
+  }
+  speedEl.textContent = msg || 'Speed test failed';
+})();
+</script>
+</body>
+</html>
