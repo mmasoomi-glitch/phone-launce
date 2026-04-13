@@ -1,6 +1,3 @@
-from gevent import monkey
-monkey.patch_all(thread=False, subprocess=False)
-
 import io
 import logging
 import threading
